@@ -1,20 +1,35 @@
 (ns kosha.db.ragam
-  (:require [kosha.db.util :as db-util]))
+  (:require [clojure.set :as set]
+            [kosha.db.util :as db-util]))
+
+(def ragam-ks
+  [:ragam-id :name :arohanam :avarohanam :ragam-link :melakartha :mela-ragam-id :data-source])
+
+(def new-ragam-ks
+  {:ragam-link :wiki-page})
 
 (defn ragam
   "Retrieves details of a ragam given it's id."
   [ragam-id]
-  (let [q ["SELECT ragam_id, name, arohanam, avarohanam, ragam_link AS wiki_page, melakartha, mela_ragam_id, data_source
+  (let [q ["SELECT *
             FROM ragams
             WHERE ragam_id = ?; "
            ragam-id]]
-    (first (db-util/run-query q))))
+    (-> (db-util/run-query q)
+        first
+        (select-keys ragam-ks)
+        (set/rename-keys new-ragam-ks))))
+
+(def kriti-ks
+  [:kriti-id :name :composer :taala :language :ragam-id :url :data-source])
 
 (defn kritis-of-ragam
   "Retrieves all kritis of a ragam with the given id."
   [ragam-id]
-  (let [q ["SELECT kriti_id, name, composer, taala, language, ragam_id, url, data_source
+  (let [q ["SELECT *
             FROM kritis
             WHERE ragam_id = ?; "
            ragam-id]]
-    (vec (db-util/run-query q))))
+    (->> (db-util/run-query q)
+         (map #(select-keys % kriti-ks))
+         vec)))

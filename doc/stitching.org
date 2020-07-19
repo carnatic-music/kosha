@@ -1,0 +1,198 @@
+* Stitching
+
+1. Problem
+   + [[#problem][Statement]]
+   + [[#solution][Possible Solutions]]
+2. [[#subproblems][Subproblems]]
+   + [[#finding-sets-of-strings-similar-to-each-other][String matching]]
+   + [[#scoring-evaluating-the-quality-of-stitching][Scoring a stitching strategy]]
+   + [[#score-map-description-of-stats][Score map description]]
+       + [[#by-edges][Edge comparisons]]
+       + [[#by-sets][Grouping comparisons]]
+3. [[#usage][Usage]]
+   + [[#stitching-1][Stitching]]
+   + [[#scoring][Scoring]]
+
+** Problem
+
+Kosha scrapes data from Sangeethapriya, Karnatik and Wikipedia. All three sources have different schema, and have to be /stitched/ into a mediated schema.
+
+These three sources of data are [[https://en.wikipedia.org/wiki/Semantic_heterogeneity][semantically heteregenous]], i.e. there are three different schemas developed by independent parties for the same domain, resulting in differences in meaning and interpretation of data values.
+
+*E.g.*: the ragam /Gangeyabhushani/ is spelt in the Karnatik dataset as /gangayabhooshhani/ and in the Sangeethapriya dataset as /gAngEyabhUshaNi/.
+
+To map these different values to a single semantic category, we must [[https://en.wikipedia.org/wiki/Semantic_translation][semantically translate]] values to match and establish equivalence of *instances* (e.g. /gangayabhooshhani/ ≡  /gAngEyabhUshaNi/, in the above case). Class equivalence (e.g. /tracks/ ≡ /renditions/) and attribute equivalence (e.g. /raga\_name/ ≡ /raga/) can be established manually because there are only a few such terms.
+
+However, matching of instances must be done programmatically as they are higher in number (or crowdsourced).
+
+
+** Solution
+
+The book /[[http://infolab.stanford.edu/~ullman/mmds/book.pdf][Mining of Massive Datasets]]/ by /A. Rajaraman and Jeff Ullman/ identifies this problem as *'Entity Resolution'* /(pg. 111)/. The solution consists of two parts:
+
+1. Define a string metric to assign a similarity score to each pair of strings (e.g. raga names).
+2. Use the [[https://en.wikipedia.org/wiki/Locality-sensitive_hashing][Locality-Sensitive Hashing (LSH)]] scheme: classify string pairs into buckets, and apply different distance metrics on each bucket. These distance metrics may also include contextual information (e.g. how many kritis of raga A and B are similar).
+
+Here, we document the LSH approach and catalogue the various string distance metrics we could experiment with.
+
+*** 1. Locality-Sensitive Hashing (LSH)
+
+Steps involved:
+
+1. We use our distance metric on each pair of strings to assign a probability indicating that they are semantically equivalent.
+2. We classify these string pairs into buckets based on the probability range they are in.
+3. For each bucket, we apply different types of distance metrics to the string pairs in it. These different distance metrics form a /family of Locally-Sensitive Functions/. We can 'amplify' this family of distance metrics by combining two LSF families using AND-construction or OR-construction /(pg. 101 of book)/.
+
+The next section discusses different distance metrics, and thus gives an idea of the functions in an LSF family of interest.
+
+*** 2. String distance metrics
+
+String metrics map a pair of strings (S, T) to a real number R. A survey of string matching techniques is available in the paper /[[http://www.cs.cmu.edu/~wcohen/postscript/ijcai-ws-2003.pdf][A Comparison of String Distance Metrics for Name-Matching Tasks]]/. The paper also describes how to combine two different string distance metrics.
+
+**** String metrics for transliterated Indic text
+The paper identifies the /Jaro-Winkler metric/ as better-performing. However, since Kosha involves matching of transliterated Indic text, a combination of a phonetic scheme such as the /Soundex metric/ and the /Jaro-Winkler metric/ seems more promising. Also, since different words may have similar endings (e.g. manohari, malahari, bilahari) or similar beginnings (e.g. hamsanārāyani, hamsanaadam), a token-based distance metric as described in the paper could be used, after tokens have been identified based on token frequencies in each dataset.
+
+**** Distance metrics based on context
+Distance and similarity metrics are more general than string metrics. They can also look at contextual information in cases where using only a string metric gives rise to uncertainity. *E.g.*: if a raga name-string S from Sangeethapriya and a raga name-string K from Karnatik are only 75% likely to be equivalent based on the above scheme, we can check for the kritis associated with S and K in the respective databases and see how well they match. Thus, distance metrics map a pair of strings (S,T) and their shared context C to a real number R.
+
+**** Other notions of distance
+The definition of a distance metric is not limited to the inherent properties of the string/entity. For example, the /normalized Google distance (NGD)/ between two words S and T is defined as a function of the number of times T occurs in the Google search results of the word S ([[https://arxiv.org/pdf/0901.4180.pdf][source]]).
+
+
+** Subproblems
+*** Finding sets of strings similar to each other.
+
+We need to group a set *S* of strings, into a set *G* of sets, where for each set *g* /E/ *G*, *g* = *{* /(a,b)/ *|* /a,b/ E *S* where /similarity/ (/a/, /b/) > /minimum/ *}*, where /minimum/ is a user-specified minimum threshold value and /similarity/ is a user-specified string similarity function.
+
+
+**** How do we do this?
+
+1. *Create graph*: Consider each string *s* /E/ *S* to be a node in an undirected graph *T*.
+2. *Connect edges*: For all pairs /(s1, s2)/ where /s1, s2/ /E/ *S*, an edge exists from /s1/ to /s2/ if /similarity/ (s1, s2) > minimum.
+3. *Find connected components*: The set of connected components of the graph *T* gives the grouping *G* that we require.
+
+*** Scoring: evaluating the quality of stitching
+A common type of stitching strategy for merging similar ragams or kritis in Kosha involves:
+- A list of strings /S/, e.g. =["aabheri", "Abheri", "abhiru", "gaula", "gowla"]=
+- A string similarity function *f*, e.g. =soundex("string1","string2")=. A distance function can be turned into a similarity function using =dist: (1-similarity)=.
+- A minimum value *min* of the similarity function *f* applied to two strings, for them to be considered a match.
+
+The output of a strategy includes an edge-list of a graph: a collection of pairs of strings (/s1/, /s2/) such that *f* (/s1/, /s2/) > *min*.
+For example, an edge list may look like:
+#+BEGIN_SRC clojure
+#{#{"aabheri" "Abheri"} #{"Abheri" "abhiru"} #{"aabheri" "abhiru"} #{"gaula" "gowla"}}
+#+END_SRC
+
+In order to evaluate the quality of a stitching strategy, we use a test data set of 'correct matches' scraped from the [[http://www.karnatik.com/ragas.shtml][list of ragas in Karnatik]] and compare it against the matches obtained by our strategy. This returns a *score map*, and the stats provided by this map are explained in the next section.
+
+*** Score Map: description of stats
+The =similarity_score= function is a combination of levenshtein, soundex and trigram string similarities with custom weightages. Evaluating the =similarity_score= function with a =minimum similarity score of 8/10= against the 'correct test data' gives this score map:
+#+BEGIN_SRC clojure
+{:by-edges {:totals      {:result-matches 1753,
+                          :expected-matches 3120},
+            :matches     {:false-negatives 1461,
+                          :false-positives 94,
+                          :true-positives 1659},
+            :percentages {:true-pos-by-exp-matches 53.173077,
+                          :true-pos-by-res-matches 94.637764}},
+
+ :by-sets {:fully-identified            390,
+           :wrongly-identified          243,
+           :unidentified                256,
+           :partially-correct-subsets   202,
+           :partially-correct-supersets 50}}
+#+END_SRC
+
+
+**** By Edges
+This key contains stats obtained by comparing the existence or the absence of a match (string pair) in the resultant edge-list, compared to the edge-list of the 'correct data set'.
+
+Example edge-list: =#{#{"aabheri" "Abheri"} #{"Abheri" "abhiru"} #{"aabheri" "abhiru"} #{"gaula" "gowla"}}=.
+
+1. Totals:
+   + Expected Matches: no. of matches (string pairs) that are similar according to the 'correct data set'.
+   + Result Matches: no. of matches (string pairs) identified as similar by the strategy we're evaluating.
+2. Matches:
+   + False Negatives: no. of matches not identified as similar by the strategy, although they are similar according to the 'correct data set'.
+   + False Positives: no. of matches identified as similar by the strategy, although they are /not/ similar according to the 'correct data set'.
+   + True Positives: correct matches, i.e. no. of matches identified as similar by both the strategy and the 'correct data set'.
+3. Percentages:
+   + True Positive / Expected Matches: The percentage of matches in the 'correct data set' that were rightly matched using the strategy.
+   + True Positive / Result Matches: The percentage of matches that were right among the matches obtained using the strategy.
+
+**** By Sets
+This key contains stats obtained by comparing /sets/ of similar strings from the data.
+
+Example set of sets of similar strings: =#{#{"aabheri" "Abheri" "abhiru"} #{"gaula" "gowla"}}=.
+
+From now on, we'll call each element of this set a /similarity grouping/, or in short: /grouping/.
+
+1. Fully Identified Sets
+   + The no. of /groupings/ obtained by the strategy that /exactly/ matches the /groupings/ in the 'correct data set'.
+2. Wrongly Identified Sets
+   + The no. of /groupings/ obtained by the strategy that did not /exactly/ match the /groupings/ in the 'correct data set'. This name is misleading, as this disregards partial matches.
+3. Unidentified Sets
+   + The no. of /groupings/ that were in the 'correct data set', but were /not/ identified exactly by the strategy.
+4. Partially Correct Subsets
+   + The no. of /groupings/ in the wrongly identified sets that are actually subsets of /groupings/ in the 'correct data set', i.e. /groupings/ that are correct but not complete.
+5. Partially Correct Supersets
+   + The no. of /groupings/ in the wrongly identified sets that are actually supersets of /groupings/ in the 'correct data set', i.e. /groupings/ that are complete but containe one or more incorrect matches.
+
+** Usage
+*** Stitching
+You can find groups of similar strings based on a similarity function from a list of similar strings. The similarity function must be present in the database. Some similarity functions are present amongst the kosha database migrations in =resources/migrations/=.
+
+**** _If the strings are in an edn file_
+Use the REPL from the =kosha.stitching.core= namespace.
+1) Read the strings and write them to db:
+    #+BEGIN_SRC clojure
+    (data/read-scraped "output/test-data.edn")
+    (def names-table (write-names-to-table all-ragams (create-names-table "temp_table"))
+    #+END_SRC
+    =names-table= is a map that describes the table: ={:name "temp_table" :id-column "name_id" :names-column "name"}=. The db will now contain a table called =temp_table= with all the strings in the =name= column.
+2) Get matches/edge-list:
+    For a strategy that uses the string similarity function =similarity_score(string1, string2)= in Postgres with a minimum score of *8* (/out of 10/), we run:
+    #+BEGIN_SRC clojure
+    (def edges (get-edges-by-string names-table "similarity_score({{a}}, {{b}}) > 7"))
+    #+END_SRC
+    Note that the you have to use =a= and =b= within the ={{= =}}= to represent the first and second string, respectively.
+3) Get the groups of similar ragams:
+    #+BEGIN_SRC clojure
+    (similar-ragams edges)
+    #+END_SRC,
+    where =edges= is defined in step 2.
+**** _If the strings are in a table in the kosha db_
+The list of strings should lie in a table having the following columns =(name_id bigint, name varchar(100))=.
+1. Define the map that describes the table:
+   #+BEGIN_SRC clojure
+   (def names-table {:name "table_name_here" :id-column "name_id" :names-column "name"})
+   #+END_SRC
+2. Get matches/edge-list:
+   For a strategy that uses the string similarity function =similarity-score(string1, string2)= in Postgres with a minimum score of 8 (out of 10), we run:
+   #+BEGIN_SRC clojure
+   (def edges (get-edges-by-string names-table "similarity_score({{a}}, {{b}}) > 7"))
+   #+END_SRC
+   Note that the you have to use =a= and =b= within the ={{= =}}= to represent the first and second string, respectively.
+3. Get the groups of similar ragams:
+   #+BEGIN_SRC clojure
+   (similar-ragams edges)
+   #+END_SRC,
+   where edges is defined in step 3.
+
+*** Scoring
+To score a strategy involving a /similarity function/ and a /minimum threshold similarity score/ for that function, we use a test set of ragam names scraped from Karnatik.
+We take the edge-list obtained in Step 2 of stitching these scraped names using a strategy and compare the resulting edge-list against a 'correct edge-list' obtained by scraping Karnatik.
+Instructions on how to scrape this data from scratch is available in the [[scraping.org][scraping]] doc.
+From the =kosha.stitching.core= namespace:
+**** Step 1: Obtaining the 'correct edge-list'
+#+BEGIN_SRC clojure
+(def *correct-edge-list (data/edge-list (data/read-scraped "output/classified-test-data.edn")))
+#+END_SRC
+**** Step 2: Obtaining the edge list for a strategy
+Follow the steps mentioned under *Usage* -> *Stitching* until Step 3 to obtain the edge-list =*edge-list=.
+**** Step 3: Compare the two edge lists and score the strategy
+Run:
+#+BEGIN_SRC clojure
+(score/compare-edge-list *correct-edge-list *edge-list)
+#+END_SRC
+to obtain a map of different statistics. To understand these statistics, read about the scoring *Subproblem* in the [[stitching.org][stitching]] doc.
